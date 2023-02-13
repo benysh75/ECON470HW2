@@ -41,13 +41,6 @@ final.hcris =
   group_by(provider_number, fyear) %>%
   mutate(report_number=row_number())
 
-## identify hospitals with only one report per fiscal year 
-unique.hcris1 =
-  final.hcris %>%
-  filter(total_reports==1) %>%
-  select(-report, -total_reports, -report_number, -npi, -status) %>%
-  mutate(source='unique reports')
-
 ## Create objects for markdown -------------------------------------------------
 
 q1.data <- final.hcris %>% filter(report_number > 1) %>%
@@ -55,6 +48,7 @@ q1.data <- final.hcris %>% filter(report_number > 1) %>%
 
 q1.plot <- q1.data %>%
   ggplot(aes(x = fyear, y = count)) + geom_point() + geom_line() +
+  scale_x_continuous(breaks = c(1997:2017)) +
   labs(x = "Year", y = "Number of Hospitals", Title = "Number of Hospitals with More Than 1 Report in Each Year from 1997 to 2018") +
   theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
   theme(
@@ -64,9 +58,41 @@ q1.plot <- q1.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
-q2.value <- length(unique(unique.hcris1$provider_number))
+q2.value <- length(unique(
+  (final.hcris.data %>% filter(source == "unique reports"))$provider_number
+  ))
+
+q3.plot <- final.hcris.data %>%
+  ggplot(aes(x = factor(year), y = tot_charges)) +
+  geom_jitter(alpha = .05) +
+  geom_violin(alpha = .9, draw_quantiles = c(0.5)) +
+  labs(x = "Year", y = "Total Charges", Title = "Distribution of Total Charges in Each Year from 1997 to 2018") +
+  theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
+  theme(
+    plot.title = element_text(size = 12, color = "black", hjust = 0.5),
+    legend.title = element_text(size = 10, color = "black"),
+    legend.position = "top",
+    axis.title = element_text(size = 10, color = "black"),
+    axis.text = element_text(size = 10, color = "black"))
+
+q4.data <- final.hcris.data %>% mutate(discount_factor = 1-tot_discounts/tot_charges,
+                            price_num = (ip_charges + icu_charges + ancillary_charges)*discount_factor - tot_mcare_payment,
+                            price_denom = tot_discharges - mcare_discharges,
+                            price = price_num/price_denom)
+q4.plot <- q4.data %>%
+  ggplot(aes(x = factor(year), y = price)) +
+  geom_jitter(alpha = .05) +
+  geom_violin(alpha = .9, draw_quantiles = c(0.5)) +
+  labs(x = "Year", y = "Estimated Prices", Title = "Distribution of Estimated Prices in Each Year from 1997 to 2018") +
+  theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
+  theme(
+    plot.title = element_text(size = 12, color = "black", hjust = 0.5),
+    legend.title = element_text(size = 10, color = "black"),
+    legend.position = "top",
+    axis.title = element_text(size = 10, color = "black"),
+    axis.text = element_text(size = 10, color = "black"))
 
 ## Save data for markdown ------------------------------------------------------
 
-rm(list=c("final.hcris", "unique.hcris1", "final.hcris.v1996", "final.hcris.v2010", "final.hcris.data"))
+rm(list=c("final.hcris.v1996", "final.hcris.v2010", "final.hcris.data", "final.hcris", "q1.data", "q4.data"))
 save.image("Hwk2_workspace.Rdata")
