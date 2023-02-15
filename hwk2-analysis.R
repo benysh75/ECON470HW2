@@ -7,7 +7,8 @@
 ## Preliminaries ---------------------------------------------------------------
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, ggplot2, dplyr, lubridate)
+pacman::p_load(tidyverse, ggplot2, dplyr, lubridate, stringr, readxl, data.table, 
+               gdata, MatchIt, cobalt, Matching)
 
 ## Read data and set workspace for knitr ---------------------------------------
 
@@ -139,106 +140,277 @@ q6.data <- q6.data %>% pivot_wider(names_from = bed_size, values_from = `mean(pr
 
 ## Question 7 Nearest Neighbors ------------------------------------------------
 
+## ALL -------------------------------------------------------------------------
 
-## nearest neighbor matching with euclidean distance weights (inverse variance distance)
+lp.vars <- final.hcris %>%
+  dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+  na.omit()
+lp.covs <- lp.vars %>% dplyr::select(beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment)
+
+## nearest neighbor matching with inverse variance distance weights
+
+nn.est1.all <- Matching::Match(Y=lp.vars$price,
+                               Tr=lp.vars$penalty,
+                               X=lp.covs,
+                               M=1,
+                               Weight=1,
+                               estimand="ATE")
+summary(nn.est1.all)
+nn.est1.est.all <- -526.95
+
+love.plot(bal.tab(nn.est1.all, covs = lp.covs, treat = lp.vars$penalty), 
+          threshold=0.1, 
+          grid=FALSE, sample.names=c("Unmatched", "Matched"),
+          position="top", shapes=c("circle","triangle"),
+          colors=c("black","blue")) + 
+  theme_bw()
+
+## nearest neighbor matching with Mahalanobis distance weights
+
+nn.est2.all <- Matching::Match(Y=lp.vars$price,
+                               Tr=lp.vars$penalty,
+                               X=lp.covs,
+                               M=1,
+                               Weight=2,
+                               estimand="ATE")
+summary(nn.est2.all)
+nn.est2.est.all <- -492.82
+
+love.plot(bal.tab(nn.est2.all, covs = lp.covs, treat = lp.vars$penalty), 
+          threshold=0.1, 
+          grid=FALSE, sample.names=c("Unmatched", "Matched"),
+          position="top", shapes=c("circle","triangle"),
+          colors=c("black","blue")) + 
+  theme_bw()
+
+## nearest neighbor matching with propensity score distance weights
+
+logit.model <- glm(penalty ~ beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment, family=binomial, data = lp.vars)
+ps <- fitted(logit.model)
+nn.est3.all <- Matching::Match(Y=lp.vars$price,
+                               Tr=lp.vars$penalty,
+                               X=ps,
+                               M=1,
+                               estimand="ATE")
+summary(nn.est3.all)
+nn.est3.est.all <- -201.03
+
+love.plot(bal.tab(nn.est3.all, covs = lp.covs, treat = lp.vars$penalty), 
+          threshold=0.1, 
+          grid=FALSE, sample.names=c("Unmatched", "Matched"),
+          position="top", shapes=c("circle","triangle"),
+          colors=c("black","blue")) + 
+  theme_bw()
+
+## inverse propensity weighting (IPW) regression
+
+lp.vars <- lp.vars %>%
+  mutate(ipw = case_when(
+    penalty==1 ~ 1/ps,
+    penalty==0 ~ 1/(1-ps),
+    TRUE ~ NA_real_
+  ))
+mean.t1 <- lp.vars %>% filter(penalty==1) %>%
+  dplyr::select(price, ipw) %>% summarize(mean_p=weighted.mean(price,w=ipw))
+mean.t0 <- lp.vars %>% filter(penalty==0) %>%
+  dplyr::select(price, ipw) %>% summarize(mean_p=weighted.mean(price,w=ipw))
+nn.est4.est.all <- mean.t1$mean_p - mean.t0$mean_p
+
+# IPW weighting with regression
+
+ipw.reg <- lm(price ~ penalty, data=lp.vars, weights=ipw)
+summary(ipw.reg)
+
+reg1.dat <- lp.vars %>% filter(penalty==1, complete.cases(.))
+reg1 <- lm(price ~ beds+ mcaid_discharges + ip_charges + mcare_discharges +
+             tot_mcare_payment, data=reg1.dat)
+reg0.dat <- lp.vars %>% filter(penalty==0, complete.cases(.))
+reg0 <- lm(price ~ beds + mcaid_discharges + ip_charges + mcare_discharges +
+             tot_mcare_payment, data=reg0.dat)
+pred1 <- predict(reg1,new=lp.vars)
+pred0 <- predict(reg0,new=lp.vars)
+nn.est5.est1.all <- mean(pred1-pred0)
+
+# IPW weighting with regression in one step
+
+reg.dat <- lp.vars %>% ungroup() %>% filter(complete.cases(.)) %>%
+  mutate(beds_diff = penalty*(beds - mean(beds)),
+         mcaid_diff = penalty*(mcaid_discharges - mean(mcaid_discharges)),
+         ip_diff = penalty*(ip_charges - mean(ip_charges)),
+         mcare_diff = penalty*(mcare_discharges - mean(mcare_discharges)),
+         mpay_diff = penalty*(tot_mcare_payment - mean(tot_mcare_payment)))
+reg <- lm(price ~ penalty + beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment + 
+            beds_diff + mcaid_diff + ip_diff + mcare_diff + mpay_diff,
+          data=reg.dat)
+summary(reg)
+nn.est5.est2.all <- summary(reg)$coefficients[2,1]
+
+## Quartile --------------------------------------------------------------------
+
+## nearest neighbor matching with inverse variance distance weights
+
 for (i in 1:4) {
-  data <- final.hcris %>% filter(bed_size == i)
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+  lp.covs <- lp.vars %>% dplyr::select(beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment)
   name <- paste0("nn.est1.bedsQ", i)
-  match <- Matching::Match(Y=data$price,
-                           Tr=data$penalty,
-                           X=data$beds,
+  match <- Matching::Match(Y=lp.vars$price,
+                           Tr=lp.vars$penalty,
+                           X=lp.covs,
                            M=1,
                            Weight=1,
                            estimand="ATE")
   summary(match)
   assign(name, match)
 }
-nn.est1.est <- c(478.38, 82.977, 270.92, 80.044)
+nn.est1.est <- c(-6.5365, -742.91, -678.31, -891.79)
 nn.est1.est.avg <- mean(nn.est1.est)
 
-## nearest neighbor matching with mahalanobis weights (Mahalanobis distance)
+## nearest neighbor matching with Mahalanobis distance weights
+
 for (i in 1:4) {
-  data <- final.hcris %>% filter(bed_size == i)
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+  lp.covs <- lp.vars %>% dplyr::select(beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment)
   name <- paste0("nn.est2.bedsQ", i)
-  match <- Matching::Match(Y=data$price,
-                           Tr=data$penalty,
-                           X=data$beds,
+  match <- Matching::Match(Y=lp.vars$price,
+                           Tr=lp.vars$penalty,
+                           X=lp.covs,
                            M=1,
                            Weight=2,
                            estimand="ATE")
   summary(match)
   assign(name, match)
 }
-nn.est2.est <- c(478.38, 82.977, 270.92, 80.044)
+nn.est2.est <- c(-175.83, -803.12, -716.98, -834.59)
 nn.est2.est.avg <- mean(nn.est2.est)
 
-## propensity score (inverse propensity weighting)
+## nearest neighbor matching with propensity score distance weights
+
 for (i in 1:4) {
-  data <- final.hcris %>% filter(bed_size == i)
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+  
+  logit.model <- glm(penalty ~ beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment, family=binomial, data = lp.vars)
+  ps <- fitted(logit.model)
+  
   name <- paste0("nn.est3.bedsQ", i)
-  
-  logit.reg <- glm(penalty ~ beds, data = data, family = binomial(link = 'logit'))
-  data <- data %>%
-    mutate(ps = predict(logit.reg, type = 'response')) %>%
-    filter(ps>0 & ps<1)
-  
-  data <- data %>%
-    mutate(ipw = case_when(
-      penalty == 1 ~ 1/ps,
-      penalty == 0 ~ 1/(1-ps)
-    ))
-  
-  mean.t1 <- data %>% filter(penalty==1) %>% summarize(mean_price = weighted.mean(price, w = ipw))
-  mean.t0 <- data %>% filter(penalty==0) %>% summarize(mean_price = weighted.mean(price, w = ipw))
-  reg.ipw <- lm(price ~ penalty, data = data, weights = ipw)
-  
-  assign(name, summary(reg.ipw)$coefficient[2,1])
+  match <- Matching::Match(Y=lp.vars$price,
+                           Tr=lp.vars$penalty,
+                           X=ps,
+                           M=1,
+                           estimand="ATE")
+  summary(match)
+  assign(name, match)
 }
-nn.est3.est <- c(nn.est3.bedsQ1, nn.est3.bedsQ2, nn.est3.bedsQ3, nn.est3.bedsQ4)
+nn.est3.est <- c(757.06, -769.75, -495.44, -861.7)
 nn.est3.est.avg <- mean(nn.est3.est)
 
-## regression
+## inverse propensity weighting (IPW) regression
+
 for (i in 1:4) {
-  data <- final.hcris %>% filter(bed_size == i)
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+
+  logit.model <- glm(penalty ~ beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment, family=binomial, data = lp.vars)
+  ps <- fitted(logit.model)
+  
+  lp.vars <- lp.vars %>%
+    mutate(ipw = case_when(
+      penalty==1 ~ 1/ps,
+      penalty==0 ~ 1/(1-ps),
+      TRUE ~ NA_real_
+    ))
+  mean.t1 <- lp.vars %>% filter(penalty==1) %>%
+    dplyr::select(price, ipw) %>% summarize(mean_p=weighted.mean(price,w=ipw))
+  mean.t0 <- lp.vars %>% filter(penalty==0) %>%
+    dplyr::select(price, ipw) %>% summarize(mean_p=weighted.mean(price,w=ipw))
+  
   name <- paste0("nn.est4.bedsQ", i)
-  
-  reg1.data <- data %>% filter(penalty==1) # treatment group
-  reg1 <- lm(price ~ beds, data = reg1.data)
-  reg0.data <- data %>% filter(penalty==0) # control group
-  reg0 <- lm(price ~ beds, data = reg0.data)
-  
-  pred1 <- predict(reg1, new = data)
-  pred0 <- predict(reg0, new = data)
-  assign(name, mean(pred1 - pred0))
+  assign(name, mean.t1$mean_p - mean.t0$mean_p)
 }
 nn.est4.est <- c(nn.est4.bedsQ1, nn.est4.bedsQ2, nn.est4.bedsQ3, nn.est4.bedsQ4)
 nn.est4.est.avg <- mean(nn.est4.est)
 
-q7.data <- rbind(nn.est1.est, nn.est2.est, nn.est3.est, nn.est4.est)
-q7.data <- cbind(q7.data, c(nn.est1.est.avg, nn.est2.est.avg, nn.est3.est.avg, nn.est4.est.avg))
-colnames(q7.data) <- c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile", "Average")
-rownames(q7.data) <- c("Inverse Variance Distance", "Mahalanobis Distance", "Inverse Propensity", "Simple linear regression")
+# IPW weighting with regression
+
+for (i in 1:4) {
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+  
+  logit.model <- glm(penalty ~ beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment, family=binomial, data = lp.vars)
+  ps <- fitted(logit.model)
+  
+  lp.vars <- lp.vars %>%
+    mutate(ipw = case_when(
+      penalty==1 ~ 1/ps,
+      penalty==0 ~ 1/(1-ps),
+      TRUE ~ NA_real_
+    ))
+  
+  ipw.reg <- lm(price ~ penalty, data=lp.vars, weights=ipw)
+  reg1.dat <- lp.vars %>% filter(penalty==1, complete.cases(.))
+  reg1 <- lm(price ~ beds+ mcaid_discharges + ip_charges + mcare_discharges +
+               tot_mcare_payment, data=reg1.dat)
+  reg0.dat <- lp.vars %>% filter(penalty==0, complete.cases(.))
+  reg0 <- lm(price ~ beds + mcaid_discharges + ip_charges + mcare_discharges +
+               tot_mcare_payment, data=reg0.dat)
+  pred1 <- predict(reg1,new=lp.vars)
+  pred0 <- predict(reg0,new=lp.vars)
+  
+  name <- paste0("nn.est5.bedsQ", i)
+  assign(name,   mean(pred1-pred0))
+}
+nn.est5.est1 <- c(nn.est5.bedsQ1, nn.est5.bedsQ2, nn.est5.bedsQ3, nn.est5.bedsQ4)
+nn.est5.est1.avg <- mean(nn.est5.est1)
+
+# IPW weighting with regression in one step
+
+for (i in 1:4) {
+  lp.vars <- final.hcris %>% filter(bed_size == i) %>%
+    dplyr::select(price, penalty, beds, mcaid_discharges, ip_charges, mcare_discharges, tot_mcare_payment) %>%
+    na.omit()
+  
+  logit.model <- glm(penalty ~ beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment, family=binomial, data = lp.vars)
+  ps <- fitted(logit.model)
+  
+  lp.vars <- lp.vars %>%
+    mutate(ipw = case_when(
+      penalty==1 ~ 1/ps,
+      penalty==0 ~ 1/(1-ps),
+      TRUE ~ NA_real_
+    ))
+  
+  reg.dat <- lp.vars %>% ungroup() %>% filter(complete.cases(.)) %>%
+    mutate(beds_diff = penalty*(beds - mean(beds)),
+           mcaid_diff = penalty*(mcaid_discharges - mean(mcaid_discharges)),
+           ip_diff = penalty*(ip_charges - mean(ip_charges)),
+           mcare_diff = penalty*(mcare_discharges - mean(mcare_discharges)),
+           mpay_diff = penalty*(tot_mcare_payment - mean(tot_mcare_payment)))
+  reg <- lm(price ~ penalty + beds + mcaid_discharges + ip_charges + mcare_discharges + tot_mcare_payment + 
+              beds_diff + mcaid_diff + ip_diff + mcare_diff + mpay_diff,
+            data=reg.dat)
+  
+  name <- paste0("nn.est5.bedsQ", i)
+  assign(name, summary(reg)$coefficients[2,1])
+}
+nn.est5.est2 <- c(nn.est5.bedsQ1, nn.est5.bedsQ2, nn.est5.bedsQ3, nn.est5.bedsQ4)
+nn.est5.est2.avg <- mean(nn.est5.est2)
+
+q7.data <- rbind(nn.est1.est, nn.est2.est, nn.est3.est, nn.est4.est, nn.est5.est1, nn.est5.est2)
+q7.data <- cbind(
+  c(nn.est1.est.all, nn.est2.est.all, nn.est3.est.all, nn.est4.est.all, nn.est5.est1.all, nn.est5.est2.all),
+  q7.data,
+  c(nn.est1.est.avg, nn.est2.est.avg, nn.est3.est.avg, nn.est4.est.avg, nn.est5.est1.avg, nn.est5.est2.avg))
+colnames(q7.data) <- c("All", "1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile", "Average")
+rownames(q7.data) <- c("NN Inverse Variance Distance", "NN Mahalanobis Distance", "NN Propensity Score Distance", "Inverse Propensity Weighted Regression", "Simple Linear Regression1", "Simple Linear Regression2")
 
 ## Save data for markdown ------------------------------------------------------
 
 rm(list=c("final.hcris.v1996", "final.hcris.v2010", "hcris.data", "final.hcris", "q1.data", "q4.data"))
 save.image("Hwk2_workspace.Rdata")
-
-## Draft -----------------------------------------------------------------------
-
-data.frame(q6.data %>% pivot_wider(names_from = bed_size, values_from = `mean(price)`))
-
-## regression in a single step
-reg.data <- final.hcris %>% mutate(beds_bar = mean(beds))
-reg <- lm(price ~ penalty + beds + penalty*(beds - beds_bar), data = reg.data)
-summary(reg)
-
-reg1.data <- final.hcris %>% filter(penalty==1) # treatment group
-reg1 <- lm(price ~ beds, data = reg1.data)
-reg0.data <- final.hcris %>% filter(penalty==0) # control group
-reg0 <- lm(price ~ beds, data = reg0.data)
-
-pred1 <- predict(reg1, new = final.hcris)
-pred0 <- predict(reg0, new = final.hcris)
-mean(pred1 - pred0)
-
