@@ -13,7 +13,7 @@ pacman::p_load(tidyverse, ggplot2, dplyr, lubridate)
 
 final.hcris.v1996 <- read_rds('data/output/HCRIS_Data_v1996.rds')
 final.hcris.v2010 <- read_rds('data/output/HCRIS_Data_v2010.rds')
-final.hcris.data  <- read_rds('data/output/HCRIS_Data.rds')
+hcris.data  <- read_rds('data/output/HCRIS_Data.rds')
 
 ## Combine data -----------------------------------------------------------------
 
@@ -58,11 +58,9 @@ q1.plot <- q1.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
-q2.value <- length(unique(
-  (final.hcris.data %>% filter(source == "unique reports"))$provider_number
-  ))
+q2.value <- length(unique(hcris.data$provider_number))
 
-q3.plot <- final.hcris.data %>%
+q3.plot <- hcris.data %>%
   ggplot(aes(x = factor(year), y = tot_charges)) +
   geom_jitter(alpha = .05) +
   geom_violin(alpha = .9, draw_quantiles = c(0.5)) +
@@ -75,7 +73,7 @@ q3.plot <- final.hcris.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
-q4.data <- final.hcris.data %>% mutate(discount_factor = 1-tot_discounts/tot_charges,
+q4.data <- hcris.data %>% mutate(discount_factor = 1-tot_discounts/tot_charges,
                             price_num = (ip_charges + icu_charges + ancillary_charges)*discount_factor - tot_mcare_payment,
                             price_denom = tot_discharges - mcare_discharges,
                             price = price_num/price_denom)
@@ -92,7 +90,155 @@ q4.plot <- q4.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
+## Question 5 Penalty ----------------------------------------------------------
+
+hcris.data <- read_rds('data/output/HCRIS_Data.rds')
+
+hcris.data <- hcris.data %>%
+  mutate(discount_factor = 1-tot_discounts/tot_charges,
+         price_num = (ip_charges + icu_charges + ancillary_charges)*discount_factor - tot_mcare_payment,
+         price_denom = tot_discharges - mcare_discharges,
+         price = price_num/price_denom)
+
+final.hcris <- hcris.data %>% ungroup() %>%
+  filter(price_denom>100, !is.na(price_denom), 
+         price_num>0, !is.na(price_num),
+         price<100000, 
+         beds>30, year==2012) %>%
+  mutate(hvbp_payment = ifelse(is.na(hvbp_payment),0,hvbp_payment),
+         hrrp_payment = ifelse(is.na(hrrp_payment),0,abs(hrrp_payment)),
+         penalty = (hvbp_payment-hrrp_payment<0))
+
+q5.data <- data.frame(final.hcris %>% group_by(penalty) %>% summarise(mean(price)))
+
+## Question 6 Quarterly --------------------------------------------------------
+
+bed_q1 <- quantile(final.hcris$beds, probs = 0.25, na.rm = TRUE)
+bed_q2 <- quantile(final.hcris$beds, probs = 0.5, na.rm = TRUE)
+bed_q3 <- quantile(final.hcris$beds, probs = 0.75, na.rm = TRUE)
+bed_q4 <- quantile(final.hcris$beds, probs = 1, na.rm = TRUE)
+
+final.hcris <- final.hcris %>% mutate(
+  bed_size1 = ifelse(beds < bed_q1, 1, 0),
+  bed_size2 = ifelse(beds >= bed_q1 & beds < bed_q2, 1, 0),
+  bed_size3 = ifelse(beds >= bed_q2 & beds < bed_q3, 1, 0),
+  bed_size4 = ifelse(beds >= bed_q3 & beds <= bed_q4, 1, 0),
+  bed_size = ifelse(bed_size1 == 1, 1, 
+                    ifelse(bed_size2 == 1, 2, 
+                           ifelse(bed_size3 == 1, 3, 
+                                  ifelse(bed_size4 == 1, 4, 0)))))
+
+q6.data <- final.hcris %>% group_by(bed_size, penalty) %>% summarise(mean(price))
+
+q6.data$bed_size <- factor(q6.data$bed_size)
+q6.data$penalty <- factor(q6.data$penalty)
+levels(q6.data$bed_size) <- c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile")
+levels(q6.data$penalty) <- c("Non-Penalized", "Penalized")
+
+q6.data <- q6.data %>% pivot_wider(names_from = bed_size, values_from = `mean(price)`)
+
+## Question 7 Nearest Neighbors ------------------------------------------------
+
+
+## nearest neighbor matching with euclidean distance weights (inverse variance distance)
+for (i in 1:4) {
+  data <- final.hcris %>% filter(bed_size == i)
+  name <- paste0("nn.est1.bedsQ", i)
+  match <- Matching::Match(Y=data$price,
+                           Tr=data$penalty,
+                           X=data$beds,
+                           M=1,
+                           Weight=1,
+                           estimand="ATE")
+  summary(match)
+  assign(name, match)
+}
+nn.est1.est <- c(478.38, 82.977, 270.92, 80.044)
+nn.est1.est.avg <- mean(nn.est1.est)
+
+## nearest neighbor matching with mahalanobis weights (Mahalanobis distance)
+for (i in 1:4) {
+  data <- final.hcris %>% filter(bed_size == i)
+  name <- paste0("nn.est2.bedsQ", i)
+  match <- Matching::Match(Y=data$price,
+                           Tr=data$penalty,
+                           X=data$beds,
+                           M=1,
+                           Weight=2,
+                           estimand="ATE")
+  summary(match)
+  assign(name, match)
+}
+nn.est2.est <- c(478.38, 82.977, 270.92, 80.044)
+nn.est2.est.avg <- mean(nn.est2.est)
+
+## propensity score (inverse propensity weighting)
+for (i in 1:4) {
+  data <- final.hcris %>% filter(bed_size == i)
+  name <- paste0("nn.est3.bedsQ", i)
+  
+  logit.reg <- glm(penalty ~ beds, data = data, family = binomial(link = 'logit'))
+  data <- data %>%
+    mutate(ps = predict(logit.reg, type = 'response')) %>%
+    filter(ps>0 & ps<1)
+  
+  data <- data %>%
+    mutate(ipw = case_when(
+      penalty == 1 ~ 1/ps,
+      penalty == 0 ~ 1/(1-ps)
+    ))
+  
+  mean.t1 <- data %>% filter(penalty==1) %>% summarize(mean_price = weighted.mean(price, w = ipw))
+  mean.t0 <- data %>% filter(penalty==0) %>% summarize(mean_price = weighted.mean(price, w = ipw))
+  reg.ipw <- lm(price ~ penalty, data = data, weights = ipw)
+  
+  assign(name, summary(reg.ipw)$coefficient[2,1])
+}
+nn.est3.est <- c(nn.est3.bedsQ1, nn.est3.bedsQ2, nn.est3.bedsQ3, nn.est3.bedsQ4)
+nn.est3.est.avg <- mean(nn.est3.est)
+
+## regression
+for (i in 1:4) {
+  data <- final.hcris %>% filter(bed_size == i)
+  name <- paste0("nn.est4.bedsQ", i)
+  
+  reg1.data <- data %>% filter(penalty==1) # treatment group
+  reg1 <- lm(price ~ beds, data = reg1.data)
+  reg0.data <- data %>% filter(penalty==0) # control group
+  reg0 <- lm(price ~ beds, data = reg0.data)
+  
+  pred1 <- predict(reg1, new = data)
+  pred0 <- predict(reg0, new = data)
+  assign(name, mean(pred1 - pred0))
+}
+nn.est4.est <- c(nn.est4.bedsQ1, nn.est4.bedsQ2, nn.est4.bedsQ3, nn.est4.bedsQ4)
+nn.est4.est.avg <- mean(nn.est4.est)
+
+q7.data <- rbind(nn.est1.est, nn.est2.est, nn.est3.est, nn.est4.est)
+q7.data <- cbind(q7.data, c(nn.est1.est.avg, nn.est2.est.avg, nn.est3.est.avg, nn.est4.est.avg))
+colnames(q7.data) <- c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile", "Average")
+rownames(q7.data) <- c("Inverse Variance Distance", "Mahalanobis Distance", "Inverse Propensity", "Simple linear regression")
+
 ## Save data for markdown ------------------------------------------------------
 
-rm(list=c("final.hcris.v1996", "final.hcris.v2010", "final.hcris.data", "final.hcris", "q1.data", "q4.data"))
+rm(list=c("final.hcris.v1996", "final.hcris.v2010", "hcris.data", "final.hcris", "q1.data", "q4.data"))
 save.image("Hwk2_workspace.Rdata")
+
+## Draft -----------------------------------------------------------------------
+
+data.frame(q6.data %>% pivot_wider(names_from = bed_size, values_from = `mean(price)`))
+
+## regression in a single step
+reg.data <- final.hcris %>% mutate(beds_bar = mean(beds))
+reg <- lm(price ~ penalty + beds + penalty*(beds - beds_bar), data = reg.data)
+summary(reg)
+
+reg1.data <- final.hcris %>% filter(penalty==1) # treatment group
+reg1 <- lm(price ~ beds, data = reg1.data)
+reg0.data <- final.hcris %>% filter(penalty==0) # control group
+reg0 <- lm(price ~ beds, data = reg0.data)
+
+pred1 <- predict(reg1, new = final.hcris)
+pred0 <- predict(reg0, new = final.hcris)
+mean(pred1 - pred0)
+
