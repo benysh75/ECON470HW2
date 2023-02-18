@@ -125,11 +125,12 @@ final.hcris <- final.hcris %>% mutate(
 q6.data <- final.hcris %>% group_by(bed_size, penalty) %>% summarise(mean(price))
 
 q6.data$bed_size <- factor(q6.data$bed_size)
-q6.data$penalty <- factor(q6.data$penalty)
 levels(q6.data$bed_size) <- c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile")
-levels(q6.data$penalty) <- c("Non-Penalized", "Penalized")
 
-q6.data <- q6.data %>% pivot_wider(names_from = bed_size, values_from = `mean(price)`)
+q6.data <- q6.data %>% 
+  pivot_wider(names_from = penalty, values_from = `mean(price)`) %>%
+  mutate(diff = `TRUE` - `FALSE`)
+colnames(q6.data) <- c("Quartile Based on Bed Size", "Non-Penalized (Control)", "Penalized (Treated)", "Mean Difference")
 
 ## Question 7 Nearest Neighbors ------------------------------------------------
 
@@ -139,7 +140,7 @@ lp.vars <- final.hcris %>%
   dplyr::select(price, penalty, bed_size1, bed_size2, bed_size3)
 lp.covs <- lp.vars %>% dplyr::select(bed_size1, bed_size2, bed_size3)
 
-## nearest neighbor matching with inverse variance distance weights
+## nearest neighbor matching with inverse variance distance
 
 nn_ivd <- Matching::Match(Y=lp.vars$price,
                           Tr=lp.vars$penalty,
@@ -149,14 +150,14 @@ nn_ivd <- Matching::Match(Y=lp.vars$price,
                           estimand="ATE")
 summary(nn_ivd)
 
-love.plot(bal.tab(nn_ivd, covs = lp.covs, treat = lp.vars$penalty), 
-          threshold=0.1, 
-          grid=FALSE, sample.names=c("Unmatched", "Matched"),
-          position="top", shapes=c("circle","triangle"),
-          colors=c("black","blue")) + 
-  theme_bw()
+# love.plot(bal.tab(nn_ivd, covs = lp.covs, treat = lp.vars$penalty), 
+#           threshold=0.1, 
+#           grid=FALSE, sample.names=c("Unmatched", "Matched"),
+#           position="top", shapes=c("circle","triangle"),
+#           colors=c("black","blue")) + 
+#   theme_bw()
 
-## nearest neighbor matching with Mahalanobis distance weights
+## nearest neighbor matching with Mahalanobis distance
 
 nn_md <- Matching::Match(Y=lp.vars$price,
                          Tr=lp.vars$penalty,
@@ -166,14 +167,14 @@ nn_md <- Matching::Match(Y=lp.vars$price,
                          estimand="ATE")
 summary(nn_md)
 
-love.plot(bal.tab(nn_md, covs = lp.covs, treat = lp.vars$penalty), 
-          threshold=0.1, 
-          grid=FALSE, sample.names=c("Unmatched", "Matched"),
-          position="top", shapes=c("circle","triangle"),
-          colors=c("black","blue")) + 
-  theme_bw()
+# love.plot(bal.tab(nn_md, covs = lp.covs, treat = lp.vars$penalty), 
+#           threshold=0.1, 
+#           grid=FALSE, sample.names=c("Unmatched", "Matched"),
+#           position="top", shapes=c("circle","triangle"),
+#           colors=c("black","blue")) + 
+#   theme_bw()
 
-## nearest neighbor matching with propensity score distance weights
+## nearest neighbor matching with propensity score distance
 
 logit.model <- glm(penalty ~ bed_size1 + bed_size2 + bed_size3, data = lp.vars)
 ps <- fitted(logit.model)
@@ -184,12 +185,12 @@ nn_ps <- Matching::Match(Y=lp.vars$price,
                          estimand="ATE")
 summary(nn_ps)
 
-love.plot(bal.tab(nn_ps, covs = lp.covs, treat = lp.vars$penalty), 
-          threshold=0.1, 
-          grid=FALSE, sample.names=c("Unmatched", "Matched"),
-          position="top", shapes=c("circle","triangle"),
-          colors=c("black","blue")) + 
-  theme_bw()
+# love.plot(bal.tab(nn_ps, covs = lp.covs, treat = lp.vars$penalty), 
+#           threshold=0.1, 
+#           grid=FALSE, sample.names=c("Unmatched", "Matched"),
+#           position="top", shapes=c("circle","triangle"),
+#           colors=c("black","blue")) + 
+#   theme_bw()
 
 ## inverse propensity weighting (IPW) regression
 
@@ -228,9 +229,13 @@ reg.data <- lp.vars %>% ungroup() %>% filter(complete.cases(.)) %>%
 reg_slm <- lm(price ~ penalty + bed_size1 + bed_size2 + bed_size3 + bed_size1_diff + bed_size2_diff + bed_size3_diff, data = reg.data)
 summary(reg_slm)
 
-q7.data.rowname <- c("NN Inverse Variance Distance", "NN Mahalanobis Distance", "NN Propensity Score Distance", "Inverse Propensity Weighted Regression", "Simple Linear Regression")
+q7.data.rowname <- c("Nearest Neighbor Matching with Inverse Variance Distance",
+                     "Nearest Neighbor Matching with Mahalanobis Distance",
+                     "Nearest Neighbor Matching with Propensity Score Distance",
+                     "Inverse Propensity Weighted Regression",
+                     "Simple Linear Regression")
 q7.data.est <- c(nn_ivd$est, nn_md$est, nn_ps$est, as.matrix(reg_IPW$coefficients)[2], as.matrix(reg_slm$coefficients)[2])
-q7.data <- cbind(q7.data.rowname, round(q7.data.est, 2))
+q7.data <- cbind(q7.data.rowname, q7.data.est)
 colnames(q7.data) <- c("Estimator", "Average Treatment Effect")
 
 ## Save data for markdown ------------------------------------------------------
