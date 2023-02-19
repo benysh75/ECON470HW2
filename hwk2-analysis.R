@@ -119,8 +119,6 @@ q4.plot <- q4.data %>%
 
 ## Question 5 Penalty ----------------------------------------------------------
 
-hcris.data <- read_rds('data/output/HCRIS_Data.rds')
-
 hcris.data <- hcris.data %>%
   mutate(discount_factor = 1-tot_discounts/tot_charges,
          price_num = (ip_charges + icu_charges + ancillary_charges)*discount_factor - tot_mcare_payment,
