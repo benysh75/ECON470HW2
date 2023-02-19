@@ -1,7 +1,7 @@
 ## Title: ECON 470 HW2
 ## Author: Ben Yang
 ## Date Created: 2/13/2023
-## Date Edited: 2/13/2023
+## Date Edited: 2/19/2023
 ## Descriptions: This file renders/runs all relevant R code for the assignment
 
 ## Preliminaries ---------------------------------------------------------------
@@ -16,7 +16,9 @@ final.hcris.v1996 <- read_rds('data/output/HCRIS_Data_v1996.rds')
 final.hcris.v2010 <- read_rds('data/output/HCRIS_Data_v2010.rds')
 hcris.data  <- read_rds('data/output/HCRIS_Data.rds')
 
-## Combine data -----------------------------------------------------------------
+## Create objects for markdown -------------------------------------------------
+
+## Question 1 Hospitals with More Than One Report ------------------------------
 
 ## create missing variables for columns introduced in v2010 of hcris forms
 final.hcris.v1996 = final.hcris.v1996 %>%
@@ -36,20 +38,13 @@ final.hcris =
   final.hcris %>% 
   add_count(provider_number, fyear, name="total_reports")
 
-## create running total of reports
-final.hcris =
-  final.hcris %>% 
-  group_by(provider_number, fyear) %>%
-  mutate(report_number=row_number())
-
-## Create objects for markdown -------------------------------------------------
-
-q1.data <- final.hcris %>% filter(report_number > 1) %>%
+q1.data <- final.hcris %>% filter(total_reports > 1) %>%
   group_by(fyear) %>% summarize(count = length(unique(provider_number)))
 
 q1.plot <- q1.data %>%
   ggplot(aes(x = fyear, y = count)) + geom_point() + geom_line() +
   scale_x_continuous(breaks = c(1997:2017)) +
+  geom_text(label = q1.data$count, size = 3, nudge_x = 0, nudge_y = 10, check_overlap = TRUE) +
   labs(x = "Year", y = "Number of Hospitals", Title = "Number of Hospitals with More Than 1 Report in Each Year from 1997 to 2018") +
   theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
   theme(
