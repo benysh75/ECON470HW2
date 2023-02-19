@@ -61,10 +61,24 @@ q1.plot <- q1.data %>%
 
 q2.value <- length(unique(hcris.data$provider_number))
 
+## Question 3 Charge Distribution ----------------------------------------------
+
+q3.sum <- hcris.data %>% group_by(year) %>% 
+  summarise(
+    Mean = mean(tot_charges, na.rm = TRUE),
+    Min = min(tot_charges, na.rm = TRUE),
+    Q1 = quantile(tot_charges, 0.25, na.rm = TRUE),
+    Median = median(tot_charges, na.rm = TRUE),
+    Q3 = quantile(tot_charges, 0.75, na.rm = TRUE),
+    Max = max(tot_charges, na.rm = TRUE)
+  ) %>%
+  mutate(year = factor(year))
+
 q3.plot <- hcris.data %>%
   ggplot(aes(x = factor(year), y = tot_charges)) +
   geom_jitter(alpha = .05) +
   geom_violin(alpha = .9, draw_quantiles = c(0.5)) +
+#  scale_y_continuous(trans='log') +
   labs(x = "Year", y = "Total Charges", Title = "Distribution of Total Charges in Each Year from 1997 to 2018") +
   theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
   theme(
@@ -74,14 +88,29 @@ q3.plot <- hcris.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
+## Question 4 Price Distribution -----------------------------------------------
+
 q4.data <- hcris.data %>% mutate(discount_factor = 1-tot_discounts/tot_charges,
                             price_num = (ip_charges + icu_charges + ancillary_charges)*discount_factor - tot_mcare_payment,
                             price_denom = tot_discharges - mcare_discharges,
                             price = price_num/price_denom)
+
+q4.sum <- q4.data %>% group_by(year) %>% 
+  summarise(
+    Mean = mean(price, na.rm = TRUE),
+    Min = min(price, na.rm = TRUE),
+    Q1 = quantile(price, 0.25, na.rm = TRUE),
+    Median = median(price, na.rm = TRUE),
+    Q3 = quantile(price, 0.75, na.rm = TRUE),
+    Max = max(price, na.rm = TRUE)
+  ) %>%
+  mutate(year = factor(year))
+
 q4.plot <- q4.data %>%
   ggplot(aes(x = factor(year), y = price)) +
   geom_jitter(alpha = .05) +
   geom_violin(alpha = .9, draw_quantiles = c(0.5)) +
+#  scale_y_continuous(trans='log') +
   labs(x = "Year", y = "Estimated Prices", Title = "Distribution of Estimated Prices in Each Year from 1997 to 2018") +
   theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
   theme(
@@ -133,8 +162,6 @@ q6.data <- q6.data %>%
 colnames(q6.data) <- c("Quartile Based on Bed Size", "Non-Penalized (Control)", "Penalized (Treated)", "Mean Difference")
 
 ## Question 7 Nearest Neighbors ------------------------------------------------
-
-## ALL -------------------------------------------------------------------------
 
 lp.vars <- final.hcris %>%
   dplyr::select(price, penalty, bed_size1, bed_size2, bed_size3)
