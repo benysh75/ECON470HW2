@@ -54,6 +54,8 @@ q1.plot <- q1.data %>%
     axis.title = element_text(size = 10, color = "black"),
     axis.text = element_text(size = 10, color = "black"))
 
+## Question 2 Unique Hospital IDs ----------------------------------------------
+
 q2.value <- length(unique(hcris.data$provider_number))
 
 ## Question 3 Charge Distribution ----------------------------------------------
@@ -251,14 +253,13 @@ reg.data <- lp.vars %>% ungroup() %>% filter(complete.cases(.)) %>%
 reg_slm <- lm(price ~ penalty + bed_size1 + bed_size2 + bed_size3 + bed_size1_diff + bed_size2_diff + bed_size3_diff, data = reg.data)
 summary(reg_slm)
 
-q7.data.rowname <- c("Nearest Neighbor Matching with Inverse Variance Distance",
-                     "Nearest Neighbor Matching with Mahalanobis Distance",
-                     "Nearest Neighbor Matching with Propensity Score Distance",
-                     "Inverse Propensity Weighted Regression",
-                     "Simple Linear Regression")
-q7.data.est <- c(nn_ivd$est, nn_md$est, nn_ps$est, as.matrix(reg_IPW$coefficients)[2], as.matrix(reg_slm$coefficients)[2])
-q7.data <- cbind(q7.data.rowname, q7.data.est)
-colnames(q7.data) <- c("Estimator", "Average Treatment Effect")
+q7.data <- data.frame(c(nn_ivd$est, nn_md$est, nn_ps$est, as.matrix(reg_IPW$coefficients)[2], as.matrix(reg_slm$coefficients)[2]))
+rownames(q7.data) <- c("Nearest Neighbor Matching with Inverse Variance Distance",
+                       "Nearest Neighbor Matching with Mahalanobis Distance",
+                       "Nearest Neighbor Matching with Propensity Score Distance",
+                       "Inverse Propensity Weighted Regression",
+                       "Simple Linear Regression")
+colnames(q7.data) <- c("Average Treatment Effect")
 
 ## Save data for markdown ------------------------------------------------------
 
