@@ -1,7 +1,7 @@
 ## Title: ECON 470 HW2
 ## Author: Ben Yang
 ## Date Created: 2/13/2023
-## Date Edited: 2/19/2023
+## Date Edited: 2/20/2023
 ## Descriptions: This file renders/runs all relevant R code for the assignment
 
 ## Preliminaries ---------------------------------------------------------------
